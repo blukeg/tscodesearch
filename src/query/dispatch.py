@@ -123,6 +123,11 @@ from .cpp import (
     cpp_q_declarations, cpp_q_all_refs, cpp_q_includes, cpp_q_params,
 )
 
+from .sql import (
+    sql_q_text, sql_q_declarations, sql_q_fields, sql_q_calls,
+    sql_q_classes, sql_q_methods,
+)
+
 
 # ── Per-file process functions ────────────────────────────────────────────────
 # These use module-level parsers for efficiency (api.py accesses _q._parser etc.)
@@ -347,6 +352,34 @@ def process_cpp_file(path, mode, mode_arg, include_body=False, **kwargs):
     return _make_matches(fn() or [])
 
 
+def process_sql_file(path, mode, mode_arg, include_body=False, **kwargs):
+    """Process a SQL file. Returns list[{"line": N, "text": "..."}].
+    Uses regex-based matching (T-SQL not fully supported by tree-sitter-sql)."""
+    try:
+        src_bytes = open(path, "rb").read()
+    except OSError as e:
+        print(f"ERROR reading {path}: {e}", file=sys.stderr)
+        return []
+
+    text = src_bytes.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+
+    dispatch = {
+        "text":         lambda: sql_q_text(lines, mode_arg),
+        "declarations": lambda: sql_q_declarations(text, lines, mode_arg),
+        "fields":       lambda: sql_q_fields(text, lines, mode_arg),
+        "calls":        lambda: sql_q_calls(text, lines, mode_arg),
+        "classes":      lambda: sql_q_classes(text, lines),
+        "methods":      lambda: sql_q_methods(text, lines),
+    }
+
+    fn = dispatch.get(mode)
+    if not fn:
+        # Fall back to text search for unsupported modes
+        fn = lambda: sql_q_text(lines, mode_arg) if mode_arg else []
+    return _make_matches(fn() or [])
+
+
 # ── Extension → process function routing ─────────────────────────────────────
 
 _EXT_TO_PROCESSOR = {
@@ -360,6 +393,7 @@ _EXT_TO_PROCESSOR = {
     ".cxx":  process_cpp_file, ".c":    process_cpp_file,
     ".hpp":  process_cpp_file, ".h":    process_cpp_file,
     ".hxx":  process_cpp_file,
+    ".sql":  process_sql_file,
 }
 
 def process_any_file(path, mode, mode_arg, include_body=False, symbol_kind=None, uses_kind=None):
