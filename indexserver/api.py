@@ -416,6 +416,38 @@ def _run_query(mode: str, pattern: str, files: list, include_body: bool = False,
         native = to_native_path(resolved)
         ext = os.path.splitext(native)[1].lower()
 
+        # SQL files: use regex-based query (tree-sitter-sql can't handle T-SQL)
+        if ext == ".sql":
+            try:
+                src_bytes = open(native, "rb").read()
+            except OSError:
+                continue
+            text = src_bytes.decode("utf-8", errors="replace")
+            lines = text.splitlines()
+            from src.query.sql import (
+                sql_q_text, sql_q_declarations, sql_q_fields,
+                sql_q_calls, sql_q_classes, sql_q_methods,
+            )
+            sql_dispatch = {
+                "text":         lambda: sql_q_text(lines, pattern),
+                "declarations": lambda: sql_q_declarations(text, lines, pattern),
+                "fields":       lambda: sql_q_fields(text, lines, pattern),
+                "calls":        lambda: sql_q_calls(text, lines, pattern),
+                "classes":      lambda: sql_q_classes(text, lines),
+                "methods":      lambda: sql_q_methods(text, lines),
+                "all_refs":     lambda: sql_q_text(lines, pattern),
+            }
+            fn = sql_dispatch.get(mode)
+            if fn is None:
+                fn = lambda: sql_q_text(lines, pattern) if pattern else []
+            raw = fn()
+            if raw:
+                results.append({
+                    "file":    file_path,
+                    "matches": [{"line": ln, "text": text} for ln, text in raw],
+                })
+            continue
+
         # Get dispatch table and parser for this extension
         lang_info = _EXT_DISPATCH.get(ext)
         if lang_info:
